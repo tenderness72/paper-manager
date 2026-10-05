@@ -1,6 +1,8 @@
 'use client'
 
 import { useState } from 'react'
+import PdfInput from './PdfInput'
+import { requestJson, uploadPdf, releaseUpload } from '@/lib/clientApi'
 import { Paper } from '@/types'
 
 interface EditPaperModalProps {
@@ -21,51 +23,25 @@ export default function EditPaperModal({ paper, onClose, onSuccess }: EditPaperM
 
     // PDF upload state
     const [pdfFile, setPdfFile] = useState<File | null>(null)
-    const [pdfPath, setPdfPath] = useState<string | null>(paper.pdfPath || null)
-
-    const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-
-        setPdfFile(file)
-
-        // Immediately upload file
-        const uploadFormData = new FormData()
-        uploadFormData.append('file', file)
-        try {
-            const uploadRes = await fetch('/api/upload', {
-                method: 'POST',
-                body: uploadFormData,
-            })
-            const uploadData = await uploadRes.json()
-            setPdfPath(uploadData.url)
-        } catch (error) {
-            console.error('Failed to upload PDF:', error)
-        }
-    }
-
+    const [removeExistingPdf, setRemoveExistingPdf] = useState(false)
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
+        if (isSubmitting) return
         setIsSubmitting(true)
-
+        let uploaded: string | null = null
         try {
-            await fetch(`/api/papers/${paper.id}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...formData,
-                    year: formData.year ? parseInt(formData.year) : null,
-                    pdfPath: pdfPath,
-                }),
+            if (pdfFile) uploaded = await uploadPdf(pdfFile)
+            const result = await requestJson(`/api/papers/${paper.id}`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...formData, year: formData.year ? Number(formData.year) : null,
+                    pdfPath: uploaded || (removeExistingPdf ? null : paper.pdfPath) }),
             })
-
+            if (result.warning) alert(result.warning)
             onSuccess()
         } catch (error) {
-            console.error('Failed to update paper:', error)
-            alert('論文の更新に失敗しました')
-        } finally {
-            setIsSubmitting(false)
-        }
+            if (uploaded) await releaseUpload(uploaded)
+            alert(error instanceof Error ? error.message : '論文の更新に失敗しました')
+        } finally { setIsSubmitting(false) }
     }
 
     return (
@@ -77,6 +53,7 @@ export default function EditPaperModal({ paper, onClose, onSuccess }: EditPaperM
                     </h2>
                     <button
                         onClick={onClose}
+                        disabled={isSubmitting}
                         className="text-gray-400 hover:text-white text-3xl"
                     >
                         ×
@@ -151,17 +128,8 @@ export default function EditPaperModal({ paper, onClose, onSuccess }: EditPaperM
                         <label className="block text-sm font-medium text-gray-300 mb-2">
                             PDF
                         </label>
-                        <input
-                            type="file"
-                            accept=".pdf"
-                            onChange={handlePdfUpload}
-                            className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                        {pdfPath && (
-                            <p className="text-sm text-green-400 mt-2">
-                                {pdfFile ? '✓ 新しいPDFをアップロード完了' : '✓ PDFが登録されています'}
-                            </p>
-                        )}
+                        <PdfInput file={pdfFile} onChange={setPdfFile} disabled={isSubmitting} />
+                        {paper.pdfPath && <label className="block mt-2"><input type="checkbox" checked={removeExistingPdf} onChange={e => setRemoveExistingPdf(e.target.checked)} disabled={isSubmitting} /> 登録済み PDF を外す</label>}
                     </div>
 
                     <button

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { requestJson } from '@/lib/clientApi'
 import { Paper } from '@/types'
 import AddPaperModal from '@/components/AddPaperModal'
 import EditPaperModal from '@/components/EditPaperModal'
@@ -11,6 +12,9 @@ export default function Home() {
   const [papers, setPapers] = useState<Paper[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [errorMessage, setErrorMessage] = useState('')
+  const [query, setQuery] = useState('')
+  const visiblePapers = papers.filter(p => [p.title, p.authors, p.journal, p.abstract].some(value => value?.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())))
 
   // Edit logic
   const [editingPaper, setEditingPaper] = useState<Paper | null>(null)
@@ -21,11 +25,11 @@ export default function Home() {
 
   const fetchPapers = async () => {
     try {
-      const response = await fetch('/api/papers')
-      const data = await response.json()
+      const data = await requestJson('/api/papers')
+      setErrorMessage('')
       setPapers(data)
     } catch (error) {
-      console.error('Failed to fetch papers:', error)
+      setErrorMessage(error instanceof Error ? error.message : '読み込みに失敗しました')
     } finally {
       setIsLoading(false)
     }
@@ -45,10 +49,11 @@ export default function Home() {
     if (!confirm('この論文を削除しますか?')) return
 
     try {
-      await fetch(`/api/papers/${id}`, { method: 'DELETE' })
+      const result = await requestJson(`/api/papers/${id}`, { method: 'DELETE' })
+      if (result.warning) alert(result.warning)
       fetchPapers()
     } catch (error) {
-      console.error('Failed to delete paper:', error)
+      alert(error instanceof Error ? error.message : '削除に失敗しました')
     }
   }
 
@@ -75,16 +80,20 @@ export default function Home() {
           <NotificationSettings />
         </header>
 
+        {errorMessage && <div role="alert" className="text-red-400 mb-4">{errorMessage}<button onClick={fetchPapers} className="ml-4 underline">再試行</button></div>}
+        <label className="block mb-6">論文検索（タイトル・著者・ジャーナル・要約）
+          <input type="search" value={query} onChange={e => setQuery(e.target.value)} className="block w-full p-3 mt-2 bg-gray-800 rounded-lg" />
+        </label>
         {/* Papers Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {isLoading ? (
             <div className="col-span-full text-center py-20 text-gray-400">
               読み込み中...
             </div>
-          ) : papers.length === 0 ? (
+          ) : visiblePapers.length === 0 ? (
             <div className="col-span-full text-center py-20">
               <div className="glass p-12 inline-block">
-                <p className="text-gray-400 text-lg mb-4">まだ論文が登録されていません</p>
+                <p className="text-gray-400 text-lg mb-4">{query ? '検索結果がありません' : 'まだ論文が登録されていません'}</p>
                 <button
                   onClick={() => setIsModalOpen(true)}
                   className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-semibold rounded-lg"
@@ -94,7 +103,7 @@ export default function Home() {
               </div>
             </div>
           ) : (
-            papers.map((paper) => (
+            visiblePapers.map((paper) => (
               <PaperCard
                 key={paper.id}
                 paper={paper}

@@ -1,6 +1,8 @@
 'use client'
 
 import { useState } from 'react'
+import PdfInput from './PdfInput'
+import { requestJson, uploadPdf, releaseUpload } from '@/lib/clientApi'
 import { parseRISFile, risEntryToPaper } from '@/lib/risParser'
 
 interface AddPaperModalProps {
@@ -23,109 +25,33 @@ export default function AddPaperModal({ onClose, onSuccess }: AddPaperModalProps
 
     // PDF upload state
     const [pdfFile, setPdfFile] = useState<File | null>(null)
-    const [pdfPath, setPdfPath] = useState<string | null>(null)
+    const [risFile, setRisFile] = useState<File | null>(null)
 
+    const save = async (papers: Record<string, unknown> | Record<string, unknown>[]) => {
+        if (isSubmitting) return
+        setIsSubmitting(true)
+        let uploaded: string | null = null
+        try {
+            if (pdfFile) uploaded = await uploadPdf(pdfFile)
+            const body = Array.isArray(papers) ? papers.map(p => ({ ...p, pdfPath: uploaded })) : { ...papers, pdfPath: uploaded }
+            await requestJson('/api/papers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+            onSuccess()
+        } catch (error) {
+            if (uploaded) await releaseUpload(uploaded)
+            alert(error instanceof Error ? error.message : '論文の追加に失敗しました')
+        } finally { setIsSubmitting(false) }
+    }
     const handleManualSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        setIsSubmitting(true)
-
-        try {
-            // Upload PDF if exists
-            let finalPdfPath = pdfPath
-            if (pdfFile && !pdfPath) {
-                const uploadFormData = new FormData()
-                uploadFormData.append('file', pdfFile)
-                const uploadRes = await fetch('/api/upload', {
-                    method: 'POST',
-                    body: uploadFormData,
-                })
-                const uploadData = await uploadRes.json()
-                finalPdfPath = uploadData.url
-            }
-
-            // Create paper
-            await fetch('/api/papers', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...formData,
-                    year: formData.year ? parseInt(formData.year) : null,
-                    pdfPath: finalPdfPath,
-                }),
-            })
-
-            onSuccess()
-        } catch (error) {
-            console.error('Failed to create paper:', error)
-            alert('論文の追加に失敗しました')
-        } finally {
-            setIsSubmitting(false)
-        }
+        await save({ ...formData, year: formData.year ? Number(formData.year) : null })
     }
-
-    const handleRISUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-
-        setIsSubmitting(true)
+    const handleRISSubmit = async () => {
+        if (!risFile) return
         try {
-            const content = await file.text()
-            const entries = parseRISFile(content)
-            const papers = entries.map(risEntryToPaper)
-
-            // Upload PDF if exists
-            let finalPdfPath = pdfPath
-            if (pdfFile && !pdfPath) {
-                const uploadFormData = new FormData()
-                uploadFormData.append('file', pdfFile)
-                const uploadRes = await fetch('/api/upload', {
-                    method: 'POST',
-                    body: uploadFormData,
-                })
-                const uploadData = await uploadRes.json()
-                finalPdfPath = uploadData.url
-            }
-
-            // Add PDF path to all papers if exists
-            const papersWithPdf = papers.map(p => ({
-                ...p,
-                pdfPath: finalPdfPath,
-            }))
-
-            await fetch('/api/papers', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(papersWithPdf),
-            })
-
-            onSuccess()
-        } catch (error) {
-            console.error('Failed to import RIS:', error)
-            alert('RISファイルのインポートに失敗しました')
-        } finally {
-            setIsSubmitting(false)
-        }
-    }
-
-    const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-
-        setPdfFile(file)
-
-        // Optionally upload immediately
-        const uploadFormData = new FormData()
-        uploadFormData.append('file', file)
-        try {
-            const uploadRes = await fetch('/api/upload', {
-                method: 'POST',
-                body: uploadFormData,
-            })
-            const uploadData = await uploadRes.json()
-            setPdfPath(uploadData.url)
-        } catch (error) {
-            console.error('Failed to upload PDF:', error)
-        }
+            const papers = parseRISFile(await risFile.text()).map(risEntryToPaper)
+            if (!papers.length) throw new Error('RIS に論文情報が見つかりません')
+            await save(papers)
+        } catch (error) { alert(error instanceof Error ? error.message : 'RIS の読み込みに失敗しました') }
     }
 
     return (
@@ -137,6 +63,7 @@ export default function AddPaperModal({ onClose, onSuccess }: AddPaperModalProps
                     </h2>
                     <button
                         onClick={onClose}
+                        disabled={isSubmitting}
                         className="text-gray-400 hover:text-white text-3xl"
                     >
                         ×
@@ -235,15 +162,7 @@ export default function AddPaperModal({ onClose, onSuccess }: AddPaperModalProps
                             <label className="block text-sm font-medium text-gray-300 mb-2">
                                 PDF
                             </label>
-                            <input
-                                type="file"
-                                accept=".pdf"
-                                onChange={handlePdfUpload}
-                                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            />
-                            {pdfPath && (
-                                <p className="text-sm text-green-400 mt-2">✓ PDFアップロード完了</p>
-                            )}
+                            <PdfInput file={pdfFile} onChange={setPdfFile} disabled={isSubmitting} />
                         </div>
 
                         <button
@@ -266,7 +185,7 @@ export default function AddPaperModal({ onClose, onSuccess }: AddPaperModalProps
                             <input
                                 type="file"
                                 accept=".ris"
-                                onChange={handleRISUpload}
+                                onChange={e => setRisFile(e.target.files?.[0] || null)}
                                 disabled={isSubmitting}
                                 className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             />
@@ -276,26 +195,19 @@ export default function AddPaperModal({ onClose, onSuccess }: AddPaperModalProps
                             <label className="block text-sm font-medium text-gray-300 mb-2">
                                 PDF (オプション)
                             </label>
-                            <input
-                                type="file"
-                                accept=".pdf"
-                                onChange={handlePdfUpload}
-                                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            />
-                            {pdfPath && (
-                                <p className="text-sm text-green-400 mt-2">✓ PDFアップロード完了</p>
-                            )}
+                            <PdfInput file={pdfFile} onChange={setPdfFile} disabled={isSubmitting} />
                         </div>
 
                         <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 text-sm text-gray-300">
                             <p className="font-semibold mb-2">使い方:</p>
                             <ol className="list-decimal list-inside space-y-1">
-                                <li>RISファイルを選択してアップロード</li>
+                                <li>RISファイルを選択</li>
                                 <li>必要に応じてPDFファイルも追加</li>
-                                <li>自動的に論文情報が登録されます</li>
+                                <li>インポートボタンで登録（PDF は全論文で共有）</li>
                             </ol>
                         </div>
 
+                        <button disabled={!risFile || isSubmitting} onClick={handleRISSubmit} className="px-4 py-3 bg-indigo-600 rounded-lg disabled:opacity-50">RIS をインポート</button>
                         {isSubmitting && (
                             <div className="text-center text-gray-300">
                                 インポート中...
