@@ -4,12 +4,16 @@
   "private": true,
   "main": "main/index.js",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "npm run data:init && next dev",
+    "build": "prisma generate && next build --webpack && node scripts/prepare-standalone.cjs",
     "start": "next start",
     "lint": "eslint",
     "electron:dev": "concurrently -k \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron:build": "npm run build && electron-builder"
+    "electron:build": "npm run build && electron-builder --win nsis --x64",
+    "data:init": "node scripts/init-data.cjs",
+    "electron:pack": "npm run build && electron-builder --win --x64 --dir",
+    "test": "node tests/storage.test.cjs",
+    "test:smoke": "node scripts/smoke.cjs"
   },
   "build": {
     "appId": "com.papermanager.app",
@@ -22,19 +26,22 @@
     },
     "files": [
       "main/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/**"
     ],
     "extraResources": [
       {
         "from": ".next/standalone",
         "to": "standalone",
         "filter": [
-          "**/*"
+          "**/*",
+          "!public/uploads/**",
+          "!.data/**"
         ]
       },
       {
-        "from": "public",
-        "to": "public",
+        "from": ".next/standalone/node_modules",
+        "to": "standalone/node_modules",
         "filter": [
           "**/*"
         ]
@@ -72,5 +79,10 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "wait-on": "^9.0.4"
-  }
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "description": "Local-first paper and PDF manager for Windows",
+  "author": "Paper Manager contributors"
 }

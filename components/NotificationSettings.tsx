@@ -8,21 +8,18 @@ export default function NotificationSettings() {
     const [permission, setPermission] = useState<NotificationPermission>('default')
 
     useEffect(() => {
-        // Load saved settings
-        const savedTime = localStorage.getItem('notificationTime')
-        const savedEnabled = localStorage.getItem('notificationEnabled')
-
-        if (savedTime) setNotificationTime(savedTime)
-        if (savedEnabled) setIsEnabled(savedEnabled === 'true')
-
-        // Check notification permission
-        if ('Notification' in window) {
-            setPermission(Notification.permission)
-        }
+        // Restore browser-only settings after hydration without synchronous effect updates.
+        const timer = setTimeout(() => {
+            const savedTime = localStorage.getItem('notificationTime')
+            if (savedTime) setNotificationTime(savedTime)
+            setIsEnabled(localStorage.getItem('notificationEnabled') === 'true')
+            if ('Notification' in window) setPermission(Notification.permission)
+        }, 0)
+        return () => clearTimeout(timer)
     }, [])
 
     useEffect(() => {
-        if (!isEnabled) return
+        if (!isEnabled || !('Notification' in window)) return
 
         const checkAndNotify = () => {
             const now = new Date()

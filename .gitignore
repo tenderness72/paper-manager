@@ -45,3 +45,10 @@ next-env.d.ts
 # electron build output
 /dist
 /release
+
+# Local user data (never distribute or commit)
+/.data/
+/public/uploads/
+/prisma/*.db
+/prisma/*.db-*
+*.log

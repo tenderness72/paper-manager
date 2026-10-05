@@ -1,45 +1,40 @@
+import { withPaperMutation } from '@/lib/mutation'
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, mkdir } from 'fs/promises'
-import path from 'path'
+import { writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { apiError, ApiError, assertSameOrigin } from '@/lib/api'
+import { pdfPrefix, pdfFilePath, preparePdfDir, removePdf } from '@/lib/storage'
+import { prisma } from '@/lib/prisma'
 
 export async function POST(request: NextRequest) {
-    try {
-        const formData = await request.formData()
-        const file = formData.get('file') as File
-
-        if (!file) {
-            return NextResponse.json({ error: 'No file provided' }, { status: 400 })
-        }
-
-        // Validate file type
-        if (file.type !== 'application/pdf') {
-            return NextResponse.json({ error: 'Only PDF files are allowed' }, { status: 400 })
-        }
-
-        // Create uploads directory if it doesn't exist
-        const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'pdfs')
-        await mkdir(uploadsDir, { recursive: true })
-
-        // Generate unique filename
-        const timestamp = Date.now()
-        const filename = `${timestamp}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`
-        const filepath = path.join(uploadsDir, filename)
-
-        // Save file
-        const bytes = await file.arrayBuffer()
-        const buffer = Buffer.from(bytes)
-        await writeFile(filepath, buffer)
-
-        // Return the public URL
-        const publicUrl = `/uploads/pdfs/${filename}`
-
-        return NextResponse.json({
-            url: publicUrl,
-            filename: file.name,
-            size: file.size
-        }, { status: 201 })
-    } catch (error) {
-        console.error('Error uploading file:', error)
-        return NextResponse.json({ error: 'Failed to upload file' }, { status: 500 })
-    }
+  try {
+    assertSameOrigin(request)
+    let form: FormData
+    try { form = await request.formData() } catch { throw new ApiError(400, 'アップロード形式が不正です') }
+    const file = form.get('file')
+    if (!(file instanceof File)) throw new ApiError(400, 'PDF ファイルを選択してください')
+    if (file.size > 50 * 1024 * 1024) throw new ApiError(413, 'PDF は 50 MB 以下にしてください')
+    const buffer = Buffer.from(await file.arrayBuffer())
+    if (!file.name.toLowerCase().endsWith('.pdf') || buffer.subarray(0, 5).toString() !== '%PDF-') throw new ApiError(400, 'PDF ファイルのみアップロードできます')
+    await preparePdfDir()
+    const url = `${pdfPrefix}${randomUUID()}.pdf`
+    await writeFile(pdfFilePath(url), buffer, { flag: 'wx' })
+    return NextResponse.json({ url, filename: file.name, size: file.size }, { status: 201 })
+  } catch (error) { return apiError(error) }
+}
+// Release a staged upload on cancellation or an unsuccessful save. Shared PDFs stay intact.
+export async function DELETE(request: NextRequest) {
+  try {
+    assertSameOrigin(request)
+    return await withPaperMutation(async () => {
+      const body = await request.json()
+      if (!body || typeof body !== 'object') throw new ApiError(400, 'PDF パスが不正です')
+      const { url } = body
+      if (typeof url !== 'string') throw new ApiError(400, 'PDF パスが不正です')
+      try { pdfFilePath(url) } catch { throw new ApiError(400, 'PDF パスが不正です') }
+      if (await prisma.paper.count({ where: { pdfPath: url } })) throw new ApiError(409, 'この PDF は論文に使用されています')
+      await removePdf(url)
+      return NextResponse.json({ success: true })
+    })
+  } catch (error) { return apiError(error) }
 }
